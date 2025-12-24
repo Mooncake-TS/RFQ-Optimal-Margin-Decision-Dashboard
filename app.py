@@ -413,16 +413,12 @@ else:
         ax_m.set_title(f"Similar RFQs ({len(sim)} rows)")
 
         # Clear callouts
-        ax_m.annotate(
-            f"Low margin (<= {q_low*100:.1f}%)\nWin rate: {win_low*100:.1f}%",
             xy=(q_low, 0.95),
             xytext=(sim['margin_rate'].min(), 1.15),
             arrowprops=dict(arrowstyle="->"),
             ha="left",
             va="bottom"
         )
-        ax_m.annotate(
-            f"High margin (>= {q_high*100:.1f}%)\nWin rate: {win_high*100:.1f}%",
             xy=(q_high, 0.95),
             xytext=(q_high, 1.15),
             arrowprops=dict(arrowstyle="->"),
