@@ -9,6 +9,43 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 
+
+# =========================
+# Number format helpers (accounting-style)
+# =========================
+def fmt_int(x):
+    """Return integer with commas. Safe for NaN/None/strings."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        return f"{int(round(float(x))):,}"
+    except Exception:
+        s = str(x).strip()
+        # try to remove commas then parse
+        try:
+            return f"{int(round(float(s.replace(',', '')))):,}"
+        except Exception:
+            return s
+
+def fmt_krw(x, digits=0):
+    """Return KRW with commas."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        if digits == 0:
+            return f"{float(x):,.0f}"
+        return f"{float(x):,.{digits}f}"
+    except Exception:
+        return str(x)
+
+def fmt_pct(x, digits=1):
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        return f"{float(x)*100:.{digits}f}%"
+    except Exception:
+        return str(x)
+
 st.set_page_config(layout="wide", page_title="RFQ Optimal Margin Dashboard")
 
 # =========================
@@ -544,4 +581,5 @@ with st.expander("프로젝트 마진별 기대이익 테이블(선택 라인 �
     st.dataframe(proj_sel, use_container_width=True)
 
 st.caption("※ 이 대시보드는 '과거 RFQ 데이터로 학습된 마진-수주 패턴' + '현 프로젝트 원가 엔진'을 결합해 기대이익 최대 마진을 추천합니다.")
+
 
