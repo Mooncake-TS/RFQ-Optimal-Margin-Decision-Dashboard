@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from io import BytesIO
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -39,6 +41,96 @@ def get_assumption(ass: pd.DataFrame, item: str, default=None):
         return float(default)
     return float(row.values[0])
 
+def fmt0(x):
+    try:
+        if pd.isna(x):
+            return ""
+        return f"{float(x):,.0f}"
+    except:
+        return str(x)
+
+def fmt2(x):
+    try:
+        if pd.isna(x):
+            return ""
+        return f"{float(x):,.2f}"
+    except:
+        return str(x)
+
+def fmt_int(x):
+    try:
+        if pd.isna(x):
+            return ""
+        return f"{int(round(float(x))):,}"
+    except:
+        return str(x)
+
+def y_comma(ax):
+    ax.get_yaxis().set_major_formatter(mticker.FuncFormatter(lambda v, p: f"{int(v):,}"))
+
+def make_download_excel(project_name: str,
+                        proj: pd.DataFrame,
+                        df_lines: pd.DataFrame,
+                        proj_res: pd.DataFrame,
+                        res: pd.DataFrame,
+                        sim: pd.DataFrame) -> bytes:
+    """Export tables to Excel with comma-formatted strings (회계 스타일)."""
+    output = BytesIO()
+
+    # Display versions with commas
+    lines_disp = df_lines.copy()
+    money_cols = [
+        "material_cost_per_unit","sub_parts_cost_per_unit","processing_cost","sga_cost_per_unit",
+        "tool_amort_per_unit","dev_amort_per_unit","unit_cost",
+        "line_total_cost","material_total","processing_total","amort_total"
+    ]
+    for c in money_cols:
+        if c in lines_disp.columns:
+            lines_disp[c] = lines_disp[c].map(fmt0)
+    if "lifetime_qty" in lines_disp.columns:
+        lines_disp["lifetime_qty"] = lines_disp["lifetime_qty"].map(fmt_int)
+
+    proj_res_disp = proj_res.copy()
+    proj_res_disp["expected_profit"] = proj_res_disp["expected_profit"].map(fmt0)
+    proj_res_disp["margin"] = proj_res_disp["margin"].map(lambda x: f"{float(x)*100:.2f}%")
+
+    # Line sweep export (keep a compact table)
+    res_comp = res.groupby(["line_id","margin"], as_index=False)["expected_profit"].sum()
+    res_comp["expected_profit"] = res_comp["expected_profit"].map(fmt0)
+    res_comp["margin"] = res_comp["margin"].map(lambda x: f"{float(x)*100:.2f}%")
+
+    sim_disp = sim.copy()
+    if len(sim_disp) > 0:
+        # limit size
+        sim_disp = sim_disp.head(500)
+        for c in ["lifetime_qty"]:
+            if c in sim_disp.columns:
+                sim_disp[c] = sim_disp[c].map(fmt_int)
+        for c in ["margin_rate"]:
+            if c in sim_disp.columns:
+                sim_disp[c] = sim_disp[c].map(lambda x: f"{float(x)*100:.2f}%")
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        proj.to_excel(writer, index=False, sheet_name="Project_Fact")
+        lines_disp.to_excel(writer, index=False, sheet_name="Lines_Calc")
+        proj_res_disp.to_excel(writer, index=False, sheet_name="Margin_Sweep_Project")
+        res_comp.to_excel(writer, index=False, sheet_name="Margin_Sweep_Lines")
+        if len(sim_disp) > 0:
+            sim_disp.to_excel(writer, index=False, sheet_name="Similar_History_sample")
+
+    return output.getvalue()
+
+# =========================
+# Sidebar: cache control
+# =========================
+st.sidebar.header("데이터 로드")
+if st.sidebar.button("🔄 엑셀 반영(캐시 리셋)"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.experimental_rerun()
+
+debug = st.sidebar.checkbox("🧪 DEBUG 표시", value=False)
+
 # =========================
 # Load Data
 # =========================
@@ -73,6 +165,14 @@ def load_new_input():
     mat = clean_cols(mat)
     ass = clean_cols(ass)
 
+    # line_id merge 안정화(공백/형식)
+    if "line_id" in lines.columns:
+        lines["line_id"] = lines["line_id"].astype(str).str.strip()
+    if "line_id" in cost.columns:
+        cost["line_id"] = cost["line_id"].astype(str).str.strip()
+    if "line_id" in mat.columns:
+        mat["line_id"] = mat["line_id"].astype(str).str.strip()
+
     require_cols(proj, ["project", "sop"], "Project_Fact")
     require_cols(lines, ["line_id","site","project","product_type","spec","size","lifetime_qty"], "Lines")
     require_cols(cost, ["line_id","plate_tool_cost","cutting_tool_cost","cover_tool_cost","dev_total_cost"], "Cost_Input")
@@ -96,6 +196,11 @@ def load_new_input():
 
 hist = load_history()
 proj, lines, cost, mat, ass = load_new_input()
+
+if debug:
+    st.write("DEBUG cost.sum()", cost[["plate_tool_cost","cutting_tool_cost","cover_tool_cost","dev_total_cost"]].sum())
+    st.write("DEBUG lines.head()", lines.head())
+    st.write("DEBUG cost.head()", cost.head())
 
 # =========================
 # Train model from history
@@ -174,12 +279,6 @@ df["material_cost_per_unit"] = (
     df["sub_usage_qty"]  * df["sub_unit_price"]
 )
 
-# 부자재 규칙(너가 말한 기준 반영)
-# plate = size * plate_factor
-# sensor = sensor_cost
-# cover = plate/2 (원하면 켜기)
-# piece = sensor*piece_factor
-# inner = inner_cost
 df["plate_cost"]  = df["size"].astype(float) * plate_factor
 df["cover_cost"]  = df["plate_cost"] / 2.0
 df["sensor_cost"] = sensor_cost
@@ -201,6 +300,12 @@ df["unit_cost"] = (
     df["dev_amort_per_unit"]
 )
 
+# For project summary tables
+df["line_total_cost"] = df["unit_cost"] * df["lifetime_qty"]
+df["material_total"] = df["material_cost_per_unit"] * df["lifetime_qty"]
+df["processing_total"] = df["processing_cost"] * df["lifetime_qty"]
+df["amort_total"] = (df["tool_amort_per_unit"] + df["dev_amort_per_unit"]) * df["lifetime_qty"]
+
 # =========================
 # Similar history filter: spec+size+product_type (BEST)
 # =========================
@@ -208,12 +313,13 @@ current_keys = df[["spec","size","product_type"]].dropna().drop_duplicates()
 sim = hist.merge(current_keys, on=["spec","size","product_type"], how="inner")
 
 # =========================
-# Margin sweep
+# Margin sweep settings
 # =========================
 st.sidebar.header("Margin Sweep 설정")
-m_min = st.sidebar.slider("최소 마진", 0.00, 0.30, 0.04, 0.005)
-m_max = st.sidebar.slider("최대 마진", 0.00, 0.30, 0.15, 0.005)
+m_min = st.sidebar.slider("최소 마진", -0.05, 0.30, 0.04, 0.005)   # allow negative to show loss lines
+m_max = st.sidebar.slider("최대 마진", -0.05, 0.30, 0.15, 0.005)
 step  = st.sidebar.selectbox("Step", [0.0025, 0.005, 0.01], index=1)
+band_pct = st.sidebar.slider("🟢 최적 구간(최대 기대이익 대비 %)", 0.80, 0.99, 0.95, 0.01)
 
 if m_max <= m_min:
     st.sidebar.error("최대 마진은 최소 마진보다 커야 해.")
@@ -221,6 +327,9 @@ if m_max <= m_min:
 
 margins = np.arange(m_min, m_max + 1e-12, step)
 
+# =========================
+# Sweep compute
+# =========================
 rows = []
 for m in margins:
     for _, r in df.iterrows():
@@ -238,7 +347,7 @@ for m in margins:
         exp_profit = raw_profit * win_p
 
         rows.append({
-            "margin": m,
+            "margin": float(m),
             "line_id": r["line_id"],
             "win_prob": win_p,
             "raw_profit": raw_profit,
@@ -248,6 +357,13 @@ for m in margins:
 res = pd.DataFrame(rows)
 proj_res = res.groupby("margin", as_index=False)["expected_profit"].sum()
 best_margin = float(proj_res.loc[proj_res["expected_profit"].idxmax(), "margin"])
+best_val = float(proj_res["expected_profit"].max())
+
+# Optimal band margins
+band_threshold = band_pct * best_val
+band = proj_res[proj_res["expected_profit"] >= band_threshold].copy()
+band_min = float(band["margin"].min()) if len(band) else best_margin
+band_max = float(band["margin"].max()) if len(band) else best_margin
 
 # =========================
 # UI
@@ -271,13 +387,13 @@ f"""
 - **문제 정의**: 라인(3~5개) 단위 RFQ에서 금형/개발비 상각과 재료비 변동 때문에, “얼마에 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
 - **해결 방향**: 과거 RFQ 데이터의 *마진율-수주여부* 패턴을 학습하고, 신규 RFQ는 원가 엔진으로 단위원가를 계산한 뒤 마진을 스윕하여 의사결정  
 - **해결 방안**: 마진율을 최소~최대 범위로 변화시키며 **수주확률(모델) × 이익(원가 기반)**의 기대이익을 계산 → **기대이익 최대 마진**을 최적해로 선택  
-- **결론**: 이번 프로젝트의 최적 마진은 **{best_margin*100:.1f}%** (Step5에서 마진 변화에 따른 결과를 직접 확인 가능)
+- **결론**: 이번 프로젝트의 최적 마진은 **{best_margin*100:.1f}%** (🟢 최적 구간 {band_min*100:.1f}% ~ {band_max*100:.1f}%)
 """
 )
 
 st.divider()
 
-# -------- 2) Cost status (UPDATED: no pie, line summary) --------
+# -------- 2) Cost status --------
 st.header("2. 현 프로젝트의 원가 현황")
 
 total_qty = df["lifetime_qty"].sum()
@@ -293,30 +409,57 @@ c1.metric("총 물량", f"{int(total_qty):,}")
 c2.metric("프로젝트 가중평균 단위원가", f"{weighted_unit_cost:,.2f} KRW/EA")
 c3.metric("프로젝트 총원가(추정)", f"{project_total_cost:,.0f} KRW")
 
-st.subheader("라인별 원가 요약(한 줄씩)")
-line_summary = df.copy()
-line_summary["line_total_cost"] = line_summary["unit_cost"] * line_summary["lifetime_qty"]
-line_summary["material_total"] = line_summary["material_cost_per_unit"] * line_summary["lifetime_qty"]
-line_summary["processing_total"] = line_summary["processing_cost"] * line_summary["lifetime_qty"]
-line_summary["amort_total"] = (line_summary["tool_amort_per_unit"] + line_summary["dev_amort_per_unit"]) * line_summary["lifetime_qty"]
-
+st.subheader("라인별 원가 요약(한 줄씩, 회계 스타일)")
 show_cols = [
     "line_id","site","product_type","spec","size","lifetime_qty",
     "unit_cost","line_total_cost",
     "material_total","processing_total","amort_total"
 ]
+
+display_df = df[show_cols].copy()
+display_df["lifetime_qty"] = display_df["lifetime_qty"].map(fmt_int)
+for c in ["unit_cost","line_total_cost","material_total","processing_total","amort_total"]:
+    display_df[c] = display_df[c].map(fmt0)
+
 st.dataframe(
-    line_summary[show_cols].sort_values("line_total_cost", ascending=False),
+    display_df.sort_values("line_total_cost", ascending=False),
     use_container_width=True
 )
 
-with st.expander("라인별 원가 상세(단가 구성요소)"):
+with st.expander("라인별 원가 상세(단가 구성요소, 회계 스타일)"):
     detail_cols = [
         "line_id","site","product_type","spec","size","lifetime_qty",
         "material_cost_per_unit","sub_parts_cost_per_unit","processing_cost","sga_cost_per_unit",
         "tool_amort_per_unit","dev_amort_per_unit","unit_cost"
     ]
-    st.dataframe(df[detail_cols], use_container_width=True)
+    ddf = df[detail_cols].copy()
+    ddf["lifetime_qty"] = ddf["lifetime_qty"].map(fmt_int)
+    for c in ["material_cost_per_unit","sub_parts_cost_per_unit","processing_cost","sga_cost_per_unit","tool_amort_per_unit","dev_amort_per_unit","unit_cost"]:
+        ddf[c] = ddf[c].map(fmt0)
+    st.dataframe(ddf, use_container_width=True)
+
+# Sanity check table
+st.subheader("Sanity Check: 단위원가 구성 Top5 (어디가 폭발했는지 바로 확인)")
+san = df.copy()
+san["qty"] = san["lifetime_qty"].fillna(0)
+san["material"] = san["material_cost_per_unit"].fillna(0)
+san["subparts"] = san["sub_parts_cost_per_unit"].fillna(0)
+san["proc"] = san["processing_cost"].fillna(0)
+san["sga"] = san["sga_cost_per_unit"].fillna(0)
+san["amort"] = (san["tool_amort_per_unit"].fillna(0) + san["dev_amort_per_unit"].fillna(0))
+san["unit_cost_check"] = san["material"] + san["subparts"] + san["proc"] + san["sga"] + san["amort"]
+san["line_total_check"] = san["unit_cost_check"] * san["qty"]
+
+san_disp = san[["line_id","qty","material","subparts","proc","sga","amort","unit_cost_check","line_total_check"]].copy()
+san_disp["qty"] = san_disp["qty"].map(fmt_int)
+for c in ["material","subparts","proc","sga","amort","unit_cost_check","line_total_check"]:
+    san_disp[c] = san_disp[c].map(fmt0)
+
+st.dataframe(
+    san_disp.sort_values("line_total_check", ascending=False).head(5),
+    use_container_width=True
+)
+st.caption("Tip: 총원가가 비정상적으로 크면 material(투입량×단가), proc(가공비), subparts(plate_factor 등) 중 하나가 '단위'가 다른 경우가 많아요.")
 
 st.divider()
 
@@ -327,89 +470,15 @@ st.caption("유사 기준: spec + size + product_type가 일치하는 과거 RFQ
 if len(sim) == 0:
     st.warning("유사 조건(spec+size+type)이 일치하는 과거 RFQ가 없습니다.")
 else:
-    colL, colR = st.columns(2, gap="large")
-
-    # -----------------------------
-    # (A) Margin vs Win/Lose
-    # -----------------------------
-    with colL:
-        st.subheader("마진율 vs 수주 여부 (유사 RFQ)")
-        y = sim["win_flag"] + (np.random.rand(len(sim)) - 0.5) * 0.12
-
-        # Define "low" and "high" zones by quantiles for shading
-        q_low = float(sim["margin_rate"].quantile(0.25))
-        q_high = float(sim["margin_rate"].quantile(0.75))
-
-        fig_m, ax_m = plt.subplots()
-        # Shade low-margin zone (often higher win) and high-margin zone (often lower win)
-        ax_m.axvspan(sim["margin_rate"].min(), q_low, alpha=0.12)
-        ax_m.axvspan(q_high, sim["margin_rate"].max(), alpha=0.12)
-
-        ax_m.scatter(sim["margin_rate"], y, alpha=0.6)
-
-        # Binned win-rate line to "show the pattern"
-        bins = np.linspace(sim["margin_rate"].min(), sim["margin_rate"].max(), 9)
-        sim_tmp = sim[["margin_rate", "win_flag"]].dropna().copy()
-        sim_tmp["bin"] = pd.cut(sim_tmp["margin_rate"], bins=bins, include_lowest=True)
-        win_by_bin = sim_tmp.groupby("bin", observed=True)["win_flag"].mean()
-        x_mid = np.array([(b.left + b.right) / 2 for b in win_by_bin.index])
-        ax_m.plot(x_mid, win_by_bin.values, marker="o")
-
-        ax_m.set_yticks([0, 1])
-        ax_m.set_yticklabels(["Lose", "Win"])
-        ax_m.set_xlabel("Margin Rate")
-        ax_m.set_ylabel("Win/Lose (jittered)")
-        ax_m.set_title(f"Similar RFQs ({len(sim)} rows)")
-        ax_m.grid(True)
-
-        # Labels for shaded meaning
-        ax_m.text((sim["margin_rate"].min()+q_low)/2, 1.05, "Low margin zone", ha="center", va="bottom")
-        ax_m.text((q_high+sim["margin_rate"].max())/2, 1.05, "High margin zone", ha="center", va="bottom")
-
-        st.pyplot(fig_m)
-
-        st.caption("해석 가이드: 좌측(저마진) 음영 구간과 우측(고마진) 음영 구간의 수주 분포/빈 평균선을 비교해보면, '저마진에서 수주가 많고 고마진에서 수주가 적은지'를 직관적으로 볼 수 있어요.")
-
-    # -----------------------------
-    # (B) Quantity vs Win/Lose
-    # -----------------------------
-    with colR:
-        st.subheader("발주수량 vs 수주 여부 (유사 RFQ)")
-        # Use log scale on x for readability
-        sim_q = sim.copy()
-        sim_q["log_qty_plot"] = np.log1p(sim_q["lifetime_qty"].astype(float).fillna(0))
-        y_qty = sim_q["win_flag"] + (np.random.rand(len(sim_q)) - 0.5) * 0.12
-
-        ql = float(sim_q["log_qty_plot"].quantile(0.25))
-        qh = float(sim_q["log_qty_plot"].quantile(0.75))
-
-        fig_q, ax_q = plt.subplots()
-        ax_q.axvspan(sim_q["log_qty_plot"].min(), ql, alpha=0.12)
-        ax_q.axvspan(qh, sim_q["log_qty_plot"].max(), alpha=0.12)
-
-        ax_q.scatter(sim_q["log_qty_plot"], y_qty, alpha=0.6)
-
-        # Binned win-rate line (in log space)
-        bins_q = np.linspace(sim_q["log_qty_plot"].min(), sim_q["log_qty_plot"].max(), 9)
-        tmp = sim_q[["log_qty_plot", "win_flag"]].dropna().copy()
-        tmp["bin"] = pd.cut(tmp["log_qty_plot"], bins=bins_q, include_lowest=True)
-        win_by_bin_q = tmp.groupby("bin", observed=True)["win_flag"].mean()
-        x_mid_q = np.array([(b.left + b.right) / 2 for b in win_by_bin_q.index])
-        ax_q.plot(x_mid_q, win_by_bin_q.values, marker="o")
-
-        ax_q.set_yticks([0, 1])
-        ax_q.set_yticklabels(["Lose", "Win"])
-        ax_q.set_xlabel("log(1 + Lifetime Quantity)")
-        ax_q.set_ylabel("Win/Lose (jittered)")
-        ax_q.set_title(f"Similar RFQs ({len(sim)} rows)")
-        ax_q.grid(True)
-
-        ax_q.text((sim_q["log_qty_plot"].min()+ql)/2, 1.05, "Low qty zone", ha="center", va="bottom")
-        ax_q.text((qh+sim_q["log_qty_plot"].max())/2, 1.05, "High qty zone", ha="center", va="bottom")
-
-        st.pyplot(fig_q)
-
-        st.caption("해석 가이드: 우측(고수량) 음영 구간의 빈 평균선이 더 높게 나오면 '수량이 많을수록 수주가 잘 되는 경향'이 있음을 보여줘요.")
+    y = sim["win_flag"] + (np.random.rand(len(sim)) - 0.5) * 0.12
+    fig2, ax2 = plt.subplots()
+    ax2.scatter(sim["margin_rate"], y, alpha=0.6)
+    ax2.set_yticks([0,1])
+    ax2.set_yticklabels(["Lose","Win"])
+    ax2.set_xlabel("Margin Rate")
+    ax2.set_ylabel("Win/Lose (jittered)")
+    ax2.set_title(f"Similar RFQs ({len(sim)} rows): Margin vs Win/Lose")
+    st.pyplot(fig2)
 
     with st.expander("유사 RFQ 테이블(상위 50개)"):
         sim_show = sim[["project","site","product_type","spec","size","lifetime_qty","margin_rate","win_lose"]].head(50).copy()
@@ -419,23 +488,29 @@ else:
 
 st.divider()
 
-
 # -------- 4) Optimal margin --------
 st.header("4. 학습 결과 기반 현 프로젝트의 최적 마진율")
 st.metric("최적 마진율(기대이익 최대)", f"{best_margin*100:.1f}%")
+st.caption(f"🟢 최적 마진 구간(최대 기대이익의 {band_pct*100:.0f}% 이상): {band_min*100:.1f}% ~ {band_max*100:.1f}%")
 
 fig3, ax3 = plt.subplots()
 ax3.plot(proj_res["margin"], proj_res["expected_profit"], marker="o")
+
+# Shade optimal band
+ax3.axvspan(band_min, band_max, alpha=0.15)
+
+# Best margin line
 ax3.axvline(best_margin, linestyle="--")
 ax3.set_xlabel("Margin Rate")
 ax3.set_ylabel("Project Expected Profit (sum of lines)")
 ax3.set_title("PROJECT: Margin vs Expected Profit")
 ax3.grid(True)
+y_comma(ax3)
 st.pyplot(fig3)
 
 st.divider()
 
-# -------- 5) Sweep dashboard (UPDATED: line selection + view modes) --------
+# -------- 5) Sweep dashboard (line selection + view modes) --------
 st.header("5. 최소~최대 마진 범위에서 결과 확인(스윕 대시보드)")
 
 line_ids = sorted(df["line_id"].unique().tolist())
@@ -456,7 +531,7 @@ view_mode = st.radio(
 
 picked = st.slider("확인할 마진 선택", float(m_min), float(m_max), float(best_margin), float(step))
 
-picked_rows = res_sel[res_sel["margin"].round(6) == round(picked, 6)]
+picked_rows = res_sel[np.isclose(res_sel["margin"], picked)]
 project_expected_profit = float(picked_rows["expected_profit"].sum())
 
 # project win prob weighted avg by qty
@@ -471,10 +546,39 @@ col1.metric("선택 마진", f"{picked*100:.1f}%")
 col2.metric("예상 수주확률(가중평균)", f"{wprob*100:.1f}%")
 col3.metric("선택 라인 기대이익 합", f"{project_expected_profit:,.0f} KRW")
 
+# Line-level snapshot at picked margin
+snap = picked_rows.groupby("line_id", as_index=False).agg(
+    win_prob=("win_prob","mean"),
+    expected_profit=("expected_profit","sum"),
+    raw_profit=("raw_profit","sum")
+)
+snap = snap.merge(df_sel[["line_id","site","product_type","spec","size","lifetime_qty","unit_cost"]], on="line_id", how="left")
+
+# Define loss lines: expected_profit < 0 (possible when margin is negative)
+snap["is_loss"] = snap["expected_profit"] < 0
+
+def style_loss(row):
+    if row.get("is_loss", False):
+        return ["color: #b00020; font-weight: 700"] * len(row)
+    return [""] * len(row)
+
+st.subheader("🔴 라인별 손익 스냅샷(선택 마진 기준)")
+snap_disp = snap.copy()
+snap_disp["lifetime_qty"] = snap_disp["lifetime_qty"].map(fmt_int)
+snap_disp["unit_cost"] = snap_disp["unit_cost"].map(fmt0)
+snap_disp["expected_profit"] = snap_disp["expected_profit"].map(fmt0)
+snap_disp["raw_profit"] = snap_disp["raw_profit"].map(fmt0)
+snap_disp["win_prob"] = snap_disp["win_prob"].map(lambda x: f"{float(x)*100:.1f}%")
+snap_disp["is_loss"] = snap["is_loss"].map(lambda x: "LOSS" if x else "")
+
+st.dataframe(
+    snap_disp.style.apply(style_loss, axis=1),
+    use_container_width=True
+)
+
 # line curves
 line_curve = res_sel.groupby(["line_id","margin"], as_index=False)["expected_profit"].sum()
 
-# Apply view mode transforms
 plot_df = line_curve.copy()
 if view_mode == "정규화(라인별 0~1)":
     plot_df["expected_profit_norm"] = plot_df.groupby("line_id")["expected_profit"].transform(
@@ -489,9 +593,11 @@ for lid in sorted(plot_df["line_id"].unique()):
     else:
         ax4.plot(d["margin"], d["expected_profit"], marker="o", label=lid)
 
+# Shade optimal band + best line
+ax4.axvspan(band_min, band_max, alpha=0.12)
 ax4.axvline(best_margin, linestyle="--")
-ax4.set_xlabel("Margin Rate")
 
+ax4.set_xlabel("Margin Rate")
 if view_mode == "정규화(라인별 0~1)":
     ax4.set_ylabel("Expected Profit (normalized)")
     ax4.set_title("LINES: Margin vs Expected Profit (Normalized)")
@@ -501,14 +607,35 @@ else:
 
 if view_mode == "로그스케일(절대값)":
     ax4.set_yscale("log")
+else:
+    y_comma(ax4)
 
 ax4.grid(True)
 ax4.legend()
 st.pyplot(fig4)
 
-with st.expander("프로젝트 마진별 기대이익 테이블(선택 라인 합)"):
+with st.expander("프로젝트 마진별 기대이익 테이블(선택 라인 합, 회계 스타일)"):
     proj_sel = res_sel.groupby("margin", as_index=False)["expected_profit"].sum()
-    st.dataframe(proj_sel, use_container_width=True)
+    proj_sel_disp = proj_sel.copy()
+    proj_sel_disp["expected_profit"] = proj_sel_disp["expected_profit"].map(fmt0)
+    proj_sel_disp["margin"] = proj_sel_disp["margin"].map(lambda x: f"{float(x)*100:.2f}%")
+    st.dataframe(proj_sel_disp, use_container_width=True)
+
+st.divider()
+
+# -------- 6) Export --------
+st.header("6. 📥 결과 엑셀 Export (콤마 유지)")
+
+export_bytes = make_download_excel(project_name, proj, df, proj_res, res, sim)
+st.download_button(
+    label="📥 RFQ_Analysis_Result.xlsx 다운로드",
+    data=export_bytes,
+    file_name="RFQ_Analysis_Result.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+st.caption("※ Export 파일은 '표시용(콤마 포함 문자열)'로 저장됩니다. 추가 계산이 필요하면 원본 숫자 컬럼을 별도로 저장하도록 확장할 수도 있어요.")
+
 
 st.caption("※ 이 대시보드는 '과거 RFQ 데이터로 학습된 마진-수주 패턴' + '현 프로젝트 원가 엔진'을 결합해 기대이익 최대 마진을 추천합니다.")
 
