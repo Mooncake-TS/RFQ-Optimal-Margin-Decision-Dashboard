@@ -317,7 +317,7 @@ colB.metric("SOP", int(sop) if not pd.isna(sop) else "-")
 colC.metric("라인 수", int(len(df)))
 colD.metric("총 물량", f"{int(df['lifetime_qty'].sum()):,}")
 
-st.subheader("요약(발표용)")
+st.subheader("프로젝트 요약")
 st.markdown(
 f"""
 - **문제 정의**: 프로젝트 단위 RFQ에서 고정비 상각, 재료비 변동, 수주 규모 때문에 “얼마를 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
