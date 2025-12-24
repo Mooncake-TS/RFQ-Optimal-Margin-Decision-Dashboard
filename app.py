@@ -414,7 +414,7 @@ else:
 
         # Clear callouts
         ax_m.annotate(
-            f"저마진 구간(≤ {q_low*100:.1f}%)\n평균 수주율: {win_low*100:.1f}%",
+            f"Low margin (<= {q_low*100:.1f}%)\nWin rate: {win_low*100:.1f}%",
             xy=(q_low, 0.95),
             xytext=(sim['margin_rate'].min(), 1.15),
             arrowprops=dict(arrowstyle="->"),
@@ -422,7 +422,7 @@ else:
             va="bottom"
         )
         ax_m.annotate(
-            f"고마진 구간(≥ {q_high*100:.1f}%)\n평균 수주율: {win_high*100:.1f}%",
+            f"High margin (>= {q_high*100:.1f}%)\nWin rate: {win_high*100:.1f}%",
             xy=(q_high, 0.95),
             xytext=(q_high, 1.15),
             arrowprops=dict(arrowstyle="->"),
@@ -432,6 +432,8 @@ else:
 
         ax_m.grid(True)
         st.pyplot(fig_m)
+
+        st.caption("해석 가이드: 좌측(저마진) 음영 구간의 평균수주율이 더 높게 나오면 \"낮은 마진일수록 수주가 잘 되는 경향\"을 보여줘요.")
 
         # Extra readability: show the key comparison as metrics
         cL1, cL2 = st.columns(2)
@@ -581,5 +583,3 @@ with st.expander("프로젝트 마진별 기대이익 테이블(선택 라인 �
     st.dataframe(proj_sel, use_container_width=True)
 
 st.caption("※ 이 대시보드는 '과거 RFQ 데이터로 학습된 마진-수주 패턴' + '현 프로젝트 원가 엔진'을 결합해 기대이익 최대 마진을 추천합니다.")
-
-
