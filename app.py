@@ -9,6 +9,43 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 
+
+# =========================
+# Number format helpers (accounting-style)
+# =========================
+def fmt_int(x):
+    """Return integer with commas. Safe for NaN/None/strings."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        return f"{int(round(float(x))):,}"
+    except Exception:
+        s = str(x).strip()
+        # try to remove commas then parse
+        try:
+            return f"{int(round(float(s.replace(',', '')))):,}"
+        except Exception:
+            return s
+
+def fmt_krw(x, digits=0):
+    """Return KRW with commas."""
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        if digits == 0:
+            return f"{float(x):,.0f}"
+        return f"{float(x):,.{digits}f}"
+    except Exception:
+        return str(x)
+
+def fmt_pct(x, digits=1):
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return ""
+    try:
+        return f"{float(x)*100:.{digits}f}%"
+    except Exception:
+        return str(x)
+
 st.set_page_config(layout="wide", page_title="RFQ Optimal Margin Dashboard")
 
 # =========================
@@ -377,7 +414,7 @@ else:
 
         # Clear callouts
         ax_m.annotate(
-            f"저마진 구간(≤ {q_low*100:.1f}%)\n평균 수주율: {win_low*100:.1f}%",
+            f"Low margin (<= {q_low*100:.1f}%)\nWin rate: {win_low*100:.1f}%",
             xy=(q_low, 0.95),
             xytext=(sim['margin_rate'].min(), 1.15),
             arrowprops=dict(arrowstyle="->"),
@@ -385,7 +422,7 @@ else:
             va="bottom"
         )
         ax_m.annotate(
-            f"고마진 구간(≥ {q_high*100:.1f}%)\n평균 수주율: {win_high*100:.1f}%",
+            f"High margin (>= {q_high*100:.1f}%)\nWin rate: {win_high*100:.1f}%",
             xy=(q_high, 0.95),
             xytext=(q_high, 1.15),
             arrowprops=dict(arrowstyle="->"),
@@ -395,6 +432,8 @@ else:
 
         ax_m.grid(True)
         st.pyplot(fig_m)
+
+        st.caption("해석 가이드: 좌측(저마진) 음영 구간의 평균수주율이 더 높게 나오면 \"낮은 마진일수록 수주가 잘 되는 경향\"을 보여줘요.")
 
         # Extra readability: show the key comparison as metrics
         cL1, cL2 = st.columns(2)
