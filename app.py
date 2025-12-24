@@ -342,10 +342,29 @@ show_cols = [
     "unit_cost","line_total_cost",
     "material_total","processing_total","amort_total"
 ]
+# === 회계용 표시용 DataFrame (쉼표 적용) ===
+display_df = line_summary[show_cols].copy()
+
+int_cols = ["lifetime_qty"]
+money_cols = [
+    "unit_cost",
+    "line_total_cost",
+    "material_total",
+    "processing_total",
+    "amort_total"
+]
+
+for c in int_cols:
+    display_df[c] = display_df[c].map(lambda x: f"{int(x):,}")
+
+for c in money_cols:
+    display_df[c] = display_df[c].map(lambda x: f"{x:,.0f}")
+
 st.dataframe(
-    line_summary[show_cols].sort_values("line_total_cost", ascending=False),
+    display_df.sort_values("line_total_cost", ascending=False),
     use_container_width=True
 )
+
 
 with st.expander("라인별 원가 상세(단가 구성요소)"):
     detail_cols = [
