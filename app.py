@@ -412,20 +412,7 @@ else:
         ax_m.set_ylabel("Win/Lose (jittered)")
         ax_m.set_title(f"Similar RFQs ({len(sim)} rows)")
 
-        # Clear callouts
-            xy=(q_low, 0.95),
-            xytext=(sim['margin_rate'].min(), 1.15),
-            arrowprops=dict(arrowstyle="->"),
-            ha="left",
-            va="bottom"
-        )
-            xy=(q_high, 0.95),
-            xytext=(q_high, 1.15),
-            arrowprops=dict(arrowstyle="->"),
-            ha="left",
-            va="bottom"
-        )
-
+        # (No on-plot callouts to avoid overlap)
         ax_m.grid(True)
         st.pyplot(fig_m)
 
