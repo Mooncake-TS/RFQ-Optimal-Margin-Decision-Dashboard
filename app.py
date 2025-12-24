@@ -9,43 +9,6 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 
-
-# =========================
-# Number format helpers (accounting-style)
-# =========================
-def fmt_int(x):
-    """Return integer with commas. Safe for NaN/None/strings."""
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return ""
-    try:
-        return f"{int(round(float(x))):,}"
-    except Exception:
-        s = str(x).strip()
-        # try to remove commas then parse
-        try:
-            return f"{int(round(float(s.replace(',', '')))):,}"
-        except Exception:
-            return s
-
-def fmt_krw(x, digits=0):
-    """Return KRW with commas."""
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return ""
-    try:
-        if digits == 0:
-            return f"{float(x):,.0f}"
-        return f"{float(x):,.{digits}f}"
-    except Exception:
-        return str(x)
-
-def fmt_pct(x, digits=1):
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return ""
-    try:
-        return f"{float(x)*100:.{digits}f}%"
-    except Exception:
-        return str(x)
-
 st.set_page_config(layout="wide", page_title="RFQ Optimal Margin Dashboard")
 
 # =========================
@@ -305,9 +268,9 @@ colD.metric("총 물량", f"{int(df['lifetime_qty'].sum()):,}")
 st.subheader("요약(발표용)")
 st.markdown(
 f"""
-- **문제 정의**: RFQ 프로젝트 내 라인별 Fixed Cost 상각과 Direct Material 변동, 수주 수량 변화에 맞추어 “얼마에 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
-- **해결 방향**: 과거 RFQ 데이터의 *수량-마진율-수주여부* 및 패턴을 학습하고, 신규 RFQ는 원가 엔진으로 단위 원가를 계산한 뒤 마진을 스윕하여 의사결정  
-- **해결 방안**: 마진율을 최소 ~ 최대 범위로 변화시키며 **수주확률(모델) × 이익(원가 기반)**의 기대이익을 계산 → **기대이익 최대 마진**을 최적해로 선택  
+- **문제 정의**: 라인(3~5개) 단위 RFQ에서 금형/개발비 상각과 재료비 변동 때문에, “얼마에 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
+- **해결 방향**: 과거 RFQ 데이터의 *마진율-수주여부* 패턴을 학습하고, 신규 RFQ는 원가 엔진으로 단위원가를 계산한 뒤 마진을 스윕하여 의사결정  
+- **해결 방안**: 마진율을 최소~최대 범위로 변화시키며 **수주확률(모델) × 이익(원가 기반)**의 기대이익을 계산 → **기대이익 최대 마진**을 최적해로 선택  
 - **결론**: 이번 프로젝트의 최적 마진은 **{best_margin*100:.1f}%** (Step5에서 마진 변화에 따른 결과를 직접 확인 가능)
 """
 )
@@ -342,37 +305,44 @@ show_cols = [
     "unit_cost","line_total_cost",
     "material_total","processing_total","amort_total"
 ]
-# === 회계용 표시용 DataFrame (쉼표 적용) ===
-display_df = line_summary[show_cols].copy()
+ls = line_summary[show_cols].sort_values("line_total_cost", ascending=False)
 
-int_cols = ["lifetime_qty"]
-money_cols = [
-    "unit_cost",
-    "line_total_cost",
-    "material_total",
-    "processing_total",
-    "amort_total"
-]
+# 보기용 포맷(계산용 df는 그대로 유지)
+ls_disp = ls.copy()
+int_cols = ["spec","size","lifetime_qty"]
+money0_cols = ["line_total_cost","material_total","processing_total","amort_total"]
+money2_cols = ["unit_cost"]
 
 for c in int_cols:
-    display_df[c] = display_df[c].map(lambda x: f"{int(x):,}")
+    if c in ls_disp.columns:
+        ls_disp[c] = ls_disp[c].apply(lambda v: f"{int(v):,}" if pd.notna(v) else "")
+for c in money0_cols:
+    if c in ls_disp.columns:
+        ls_disp[c] = ls_disp[c].apply(lambda v: f"{float(v):,.0f}" if pd.notna(v) else "")
+for c in money2_cols:
+    if c in ls_disp.columns:
+        ls_disp[c] = ls_disp[c].apply(lambda v: f"{float(v):,.2f}" if pd.notna(v) else "")
 
-for c in money_cols:
-    display_df[c] = display_df[c].map(lambda x: f"{x:,.0f}")
-
-st.dataframe(
-    display_df.sort_values("line_total_cost", ascending=False),
-    use_container_width=True
-)
-
-
+st.dataframe(ls_disp, use_container_width=True)
 with st.expander("라인별 원가 상세(단가 구성요소)"):
     detail_cols = [
         "line_id","site","product_type","spec","size","lifetime_qty",
         "material_cost_per_unit","sub_parts_cost_per_unit","processing_cost","sga_cost_per_unit",
         "tool_amort_per_unit","dev_amort_per_unit","unit_cost"
     ]
-    st.dataframe(df[detail_cols], use_container_width=True)
+    detail = df[detail_cols].copy()
+
+int_cols2 = ["spec","size","lifetime_qty"]
+money2_cols2 = ["material_cost_per_unit","sub_parts_cost_per_unit","processing_cost","sga_cost_per_unit","tool_amort_per_unit","dev_amort_per_unit","unit_cost"]
+
+for c in int_cols2:
+    if c in detail.columns:
+        detail[c] = detail[c].apply(lambda v: f"{int(v):,}" if pd.notna(v) else "")
+for c in money2_cols2:
+    if c in detail.columns:
+        detail[c] = detail[c].apply(lambda v: f"{float(v):,.2f}" if pd.notna(v) else "")
+
+st.dataframe(detail, use_container_width=True)
 
 st.divider()
 
@@ -383,120 +353,25 @@ st.caption("유사 기준: spec + size + product_type가 일치하는 과거 RFQ
 if len(sim) == 0:
     st.warning("유사 조건(spec+size+type)이 일치하는 과거 RFQ가 없습니다.")
 else:
-    colL, colR = st.columns(2, gap="large")
-
-    # -----------------------------
-    # (A) Margin vs Win/Lose
-    # -----------------------------
-    with colL:
-        st.subheader("마진율 vs 수주 여부 (유사 RFQ)")
-
-        # jitter for visibility
-        y = sim["win_flag"] + (np.random.rand(len(sim)) - 0.5) * 0.12
-
-        # Quantile-based "low/high" zones to highlight pattern
-        q_low = float(sim["margin_rate"].quantile(0.25))
-        q_high = float(sim["margin_rate"].quantile(0.75))
-
-        low_zone = sim[sim["margin_rate"] <= q_low]
-        high_zone = sim[sim["margin_rate"] >= q_high]
-
-        win_low = float(low_zone["win_flag"].mean()) if len(low_zone) else np.nan
-        win_high = float(high_zone["win_flag"].mean()) if len(high_zone) else np.nan
-
-        # Visual: shaded zones + scatter + binned win-rate curve (thicker)
-        fig_m, ax_m = plt.subplots()
-
-        # Shade zones (left = low margin, right = high margin)
-        ax_m.axvspan(sim["margin_rate"].min(), q_low, alpha=0.18)
-        ax_m.axvspan(q_high, sim["margin_rate"].max(), alpha=0.18)
-
-        ax_m.scatter(sim["margin_rate"], y, alpha=0.6)
-
-        # Binned win-rate curve (shows "low margin -> higher win" pattern clearly)
-        sim_tmp = sim[["margin_rate", "win_flag"]].dropna().copy()
-        # Use quantile bins for stability
-        qs = np.quantile(sim_tmp["margin_rate"], [0, .125, .25, .375, .5, .625, .75, .875, 1.0])
-        # Make strictly increasing (handle duplicates)
-        bins = np.unique(qs)
-        if len(bins) >= 4:
-            sim_tmp["bin"] = pd.cut(sim_tmp["margin_rate"], bins=bins, include_lowest=True)
-            win_by_bin = sim_tmp.groupby("bin", observed=True)["win_flag"].mean()
-            x_mid = np.array([(b.left + b.right) / 2 for b in win_by_bin.index])
-            ax_m.plot(x_mid, win_by_bin.values, marker="o", linewidth=2.5)
-
-        ax_m.set_yticks([0, 1])
-        ax_m.set_yticklabels(["Lose", "Win"])
-        ax_m.set_xlabel("Margin Rate")
-        ax_m.set_ylabel("Win/Lose (jittered)")
-        ax_m.set_title(f"Similar RFQs ({len(sim)} rows)")
-
-        # (No on-plot callouts to avoid overlap)
-        ax_m.grid(True)
-        st.pyplot(fig_m)
-
-        st.caption("해석 가이드: 좌측(저마진) 음영 구간의 평균수주율이 더 높게 나오면 \"낮은 마진일수록 수주가 잘 되는 경향\"을 보여줘요.")
-
-        # Extra readability: show the key comparison as metrics
-        cL1, cL2 = st.columns(2)
-        cL1.metric("저마진 구간 평균 수주율", f"{win_low*100:.1f}%" if not np.isnan(win_low) else "-")
-        cL2.metric("고마진 구간 평균 수주율", f"{win_high*100:.1f}%" if not np.isnan(win_high) else "-")
-
-        st.caption("포인트: 음영(저마진/고마진) 구간의 **평균 수주율**과, 가운데의 **빈 평균선(굵은 선)** 흐름을 함께 보면 메시지가 한 눈에 들어와요.")
-
-    # -----------------------------
-    # (B) Quantity vs Win/Lose
-    # -----------------------------
-    with colR:
-        st.subheader("발주수량 vs 수주 여부 (유사 RFQ)")
-        # Use log scale on x for readability
-        sim_q = sim.copy()
-        sim_q["log_qty_plot"] = np.log1p(sim_q["lifetime_qty"].astype(float).fillna(0))
-        y_qty = sim_q["win_flag"] + (np.random.rand(len(sim_q)) - 0.5) * 0.12
-
-        ql = float(sim_q["log_qty_plot"].quantile(0.25))
-        qh = float(sim_q["log_qty_plot"].quantile(0.75))
-
-        fig_q, ax_q = plt.subplots()
-        ax_q.axvspan(sim_q["log_qty_plot"].min(), ql, alpha=0.12)
-        ax_q.axvspan(qh, sim_q["log_qty_plot"].max(), alpha=0.12)
-
-        ax_q.scatter(sim_q["log_qty_plot"], y_qty, alpha=0.6)
-
-        # Binned win-rate line (in log space)
-        bins_q = np.linspace(sim_q["log_qty_plot"].min(), sim_q["log_qty_plot"].max(), 9)
-        tmp = sim_q[["log_qty_plot", "win_flag"]].dropna().copy()
-        tmp["bin"] = pd.cut(tmp["log_qty_plot"], bins=bins_q, include_lowest=True)
-        win_by_bin_q = tmp.groupby("bin", observed=True)["win_flag"].mean()
-        x_mid_q = np.array([(b.left + b.right) / 2 for b in win_by_bin_q.index])
-        ax_q.plot(x_mid_q, win_by_bin_q.values, marker="o")
-
-        ax_q.set_yticks([0, 1])
-        ax_q.set_yticklabels(["Lose", "Win"])
-        ax_q.set_xlabel("log(1 + Lifetime Quantity)")
-        ax_q.set_ylabel("Win/Lose (jittered)")
-        ax_q.set_title(f"Similar RFQs ({len(sim)} rows)")
-        ax_q.grid(True)
-
-        ax_q.text((sim_q["log_qty_plot"].min()+ql)/2, 1.05, "Low qty zone", ha="center", va="bottom")
-        ax_q.text((qh+sim_q["log_qty_plot"].max())/2, 1.05, "High qty zone", ha="center", va="bottom")
-
-        st.pyplot(fig_q)
-
-        st.caption("해석 가이드: 우측(고수량) 음영 구간의 빈 평균선이 더 높게 나오면 '수량이 많을수록 수주가 잘 되는 경향'이 있음을 보여줘요.")
+    y = sim["win_flag"] + (np.random.rand(len(sim)) - 0.5) * 0.12
+    fig2, ax2 = plt.subplots()
+    ax2.scatter(sim["margin_rate"], y, alpha=0.6)
+    ax2.set_yticks([0,1])
+    ax2.set_yticklabels(["Lose","Win"])
+    ax2.set_xlabel("Margin Rate")
+    ax2.set_ylabel("Win/Lose (jittered)")
+    ax2.set_title(f"Similar RFQs ({len(sim)} rows): Margin vs Win/Lose")
+    st.pyplot(fig2)
 
     with st.expander("유사 RFQ 테이블(상위 50개)"):
-        sim_show = sim[["project","site","product_type","spec","size","lifetime_qty","margin_rate","win_lose"]].head(50).copy()
-        sim_show["lifetime_qty"] = sim_show["lifetime_qty"].map(fmt_int)
-        sim_show["margin_rate"] = sim_show["margin_rate"].map(lambda x: f"{float(x)*100:.2f}%")
-        st.dataframe(sim_show, use_container_width=True)
+        st.dataframe(sim[["project","site","product_type","spec","size","lifetime_qty","margin_rate","win_lose"]].head(50),
+                     use_container_width=True)
 
 st.divider()
 
-
 # -------- 4) Optimal margin --------
 st.header("4. 학습 결과 기반 현 프로젝트의 최적 마진율")
-st.metric("최적 마진율(기대이익 최대) -> 수주 확률과 연계되기에 일정 마진율을 넘어가면 수주 확률이 내려가 기대이익이 줄어들어요.", f"{best_margin*100:.1f}%")
+st.metric("최적 마진율(기대이익 최대)", f"{best_margin*100:.1f}%")
 
 fig3, ax3 = plt.subplots()
 ax3.plot(proj_res["margin"], proj_res["expected_profit"], marker="o")
@@ -532,6 +407,7 @@ picked = st.slider("확인할 마진 선택", float(m_min), float(m_max), float(
 
 picked_rows = res_sel[res_sel["margin"].round(6) == round(picked, 6)]
 project_expected_profit = float(picked_rows["expected_profit"].sum())
+project_raw_profit = float(picked_rows["raw_profit"].sum())  # 수주 확정 시 총 이익(선택 라인 합)
 
 # project win prob weighted avg by qty
 wprob = (
@@ -540,10 +416,11 @@ wprob = (
     / df_sel["lifetime_qty"].sum()
 )
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("선택 마진", f"{picked*100:.1f}%")
 col2.metric("예상 수주확률(가중평균)", f"{wprob*100:.1f}%")
 col3.metric("선택 라인 기대이익 합", f"{project_expected_profit:,.0f} KRW")
+col4.metric("수주 확정 시 총 이익(선택 라인 합)", f"{project_raw_profit:,.0f} KRW")
 
 # line curves
 line_curve = res_sel.groupby(["line_id","margin"], as_index=False)["expected_profit"].sum()
@@ -585,3 +462,4 @@ with st.expander("프로젝트 마진별 기대이익 테이블(선택 라인 �
     st.dataframe(proj_sel, use_container_width=True)
 
 st.caption("※ 이 대시보드는 '과거 RFQ 데이터로 학습된 마진-수주 패턴' + '현 프로젝트 원가 엔진'을 결합해 기대이익 최대 마진을 추천합니다.")
+
