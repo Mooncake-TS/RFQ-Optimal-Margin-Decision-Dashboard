@@ -320,10 +320,10 @@ colD.metric("총 물량", f"{int(df['lifetime_qty'].sum()):,}")
 st.subheader("요약(발표용)")
 st.markdown(
 f"""
-- **문제 정의**: 라인(3~5개) 단위 RFQ에서 금형/개발비 상각과 재료비 변동 때문에, “얼마에 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
-- **해결 방향**: 과거 RFQ 데이터의 *마진율-수주여부* 패턴을 학습하고, 신규 RFQ는 원가 엔진으로 단위원가를 계산한 뒤 마진을 스윕하여 의사결정  
-- **해결 방안**: 마진율을 최소~최대 범위로 변화시키며 **수주확률(모델) × 이익(원가 기반)**의 기대이익을 계산 → **기대이익 최대 마진**을 최적해로 선택  
-- **결론**: 이번 프로젝트의 최적 마진은 **{best_margin*100:.1f}%** (Step5에서 마진 변화에 따른 결과를 직접 확인 가능)
+- **문제 정의**: 프로젝트 단위 RFQ에서 고정비 상각, 재료비 변동, 수주 규모 때문에 “얼마를 제출해야 수주와 이익을 동시에 잡는지”가 매번 감으로 결정됨  
+- **해결 방향**: 과거 RFQ 데이터의 *마진율-수주여부 with 수주 규모* 패턴을 학습하고, 신규 RFQ는 원가 엔진으로 단가를 계산한 뒤 학습 결과를 반영한 최적 마진을 스윕하며 의사결정에 도움  
+- **해결 방안**: 마진율을 최소~최대 범위로 변화시키며 **수주확률(모델) × 이익(원가 기반)**의 기대이익을 계산 → **기대이익 최대 마진**을 최적해로 선택 후 Gross Profit 제시  
+- **결론**: 이번 프로젝트의 최적 마진은 **{best_margin*100:.1f}%** (마진 변화에 따른 결과를 개별 프로젝트 단위로도 직접 확인 가능)
 """
 )
 
@@ -455,20 +455,20 @@ else:
         ax_m.grid(True)
         st.pyplot(fig_m)
 
-        st.caption("해석 가이드: 좌측(저마진) 음영 구간의 평균수주율이 더 높게 나오면 \"낮은 마진일수록 수주가 잘 되는 경향\"을 보여줘요.")
+        st.caption("해석 가이드: 좌측 (낮은 마진) 음영 구간의 수주 케이스가 더 많으므로 \"낮은 마진일수록 수주가 잘 되는 경향\"을 보여줘요.")
 
         # Extra readability: show the key comparison as metrics
         cL1, cL2 = st.columns(2)
         cL1.metric("저마진 구간 평균 수주율", f"{win_low*100:.1f}%" if not np.isnan(win_low) else "-")
         cL2.metric("고마진 구간 평균 수주율", f"{win_high*100:.1f}%" if not np.isnan(win_high) else "-")
 
-        st.caption("포인트: 음영(저마진/고마진) 구간의 **평균 수주율**과, 가운데의 **빈 평균선(굵은 선)** 흐름을 함께 보면 메시지가 한 눈에 들어와요.")
+        st.caption("포인트: 음영(저마진/고마진) 구간의 **수주율**과, 가운데의 **평균선(굵은 선)** 흐름을 함께 보면 메시지가 한 눈에 들어와요.")
 
     # -----------------------------
     # (B) Quantity vs Win/Lose
     # -----------------------------
     with colR:
-        st.subheader("발주수량 vs 수주 여부 (유사 RFQ)")
+        st.subheader("발주 수량 vs 수주 여부 (유사 RFQ)")
         # Use log scale on x for readability
         sim_q = sim.copy()
         sim_q["log_qty_plot"] = np.log1p(sim_q["lifetime_qty"].astype(float).fillna(0))
@@ -503,7 +503,7 @@ else:
 
         st.pyplot(fig_q)
 
-        st.caption("해석 가이드: 우측(고수량) 음영 구간의 빈 평균선이 더 높게 나오면 '수량이 많을수록 수주가 잘 되는 경향'이 있음을 보여줘요.")
+        st.caption("해석 가이드: 우측(고수량)의 수주 케이스가 훨씬 많이 분포되어 '수량이 많은 RFQ를 위주로 수주한 경향'이 있음을 보여줘요.")
 
     with st.expander("유사 RFQ 테이블(상위 50개)"):
         sim_show = sim[["project","site","product_type","spec","size","lifetime_qty","margin_rate","win_lose"]].head(50).copy()
